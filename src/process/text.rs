@@ -1,5 +1,9 @@
 use crate::{process_genpass, TextSignFormat};
 use anyhow::Result;
+use chacha20poly1305::{
+    aead::{generic_array::GenericArray, Aead, AeadCore, KeyInit},
+    ChaCha20Poly1305, Nonce,
+};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 use std::{collections::HashMap, io::Read};
@@ -24,6 +28,10 @@ pub struct Ed25519Signer {
 
 pub struct Ed25519Verifier {
     key: VerifyingKey,
+}
+
+pub struct Chacha20poly1305 {
+    key: [u8; 32],
 }
 
 impl TextSigner for Blake3 {
@@ -107,6 +115,18 @@ impl Ed25519Signer {
     }
 }
 
+impl Chacha20poly1305 {
+    pub fn try_new(key: impl AsRef<[u8]>) -> Result<Self> {
+        let key = key.as_ref();
+        let key = (&key[..32]).try_into()?;
+        Ok(Self::new(key))
+    }
+
+    pub fn new(key: [u8; 32]) -> Self {
+        Self { key }
+    }
+}
+
 impl Ed25519Verifier {
     pub fn try_new(key: impl AsRef<[u8]>) -> Result<Self> {
         let key = key.as_ref();
@@ -147,6 +167,55 @@ pub fn process_text_key_generate(format: TextSignFormat) -> Result<HashMap<&'sta
         TextSignFormat::Blake3 => Blake3::generate(),
         TextSignFormat::Ed25519 => Ed25519Signer::generate(),
     }
+}
+
+pub fn process_text_key_generate_key() -> Result<HashMap<&'static str, Vec<u8>>> {
+    let key = ChaCha20Poly1305::generate_key(&mut chacha20poly1305::aead::OsRng);
+    let mut map = HashMap::new();
+    println!("{:?}", key.to_vec());
+    map.insert("chacha20poly1305.txt", key.to_vec());
+    Ok(map)
+}
+
+pub fn process_text_key_generate_nonce() -> Result<HashMap<&'static str, Vec<u8>>> {
+    let nonce = ChaCha20Poly1305::generate_nonce(&mut chacha20poly1305::aead::OsRng);
+    let mut map = HashMap::new();
+    map.insert("nonce.txt", nonce.to_vec());
+    Ok(map)
+}
+
+pub fn process_text_encrypt(reader: &mut dyn Read, key: &[u8], nonce: &[u8]) -> Result<Vec<u8>> {
+    let (cipher, nonce) = generate_nonce_cipher(key, nonce)?;
+    // let key:[u8; 32] = Chacha20poly1305::try_new(key)?.key;
+    // let key = GenericArray::from_slice(&key);
+    // let nonce = GenericArray::from_slice(nonce);
+    // let cipher = ChaCha20Poly1305::new(&key);
+    let mut buf = Vec::new();
+    reader.read_to_end(&mut buf)?;
+    let ciphertext = cipher
+        .encrypt(&nonce, buf.as_ref())
+        .map_err(|e| anyhow::anyhow!(e))?;
+    Ok(ciphertext.to_vec())
+}
+
+pub fn process_text_decrypt(reader: &mut Vec<u8>, key: &[u8], nonce: &[u8]) -> Result<Vec<u8>> {
+    let (cipher, nonce) = generate_nonce_cipher(key, nonce)?;
+    // let key:[u8; 32] = ChaCha20Poly1305::try_new(key)?.key;
+    // let key = GenericArray::from_slice(&key);
+    // let nonce = GenericArray::from_slice(nonce);
+    // let cipher = chacha20poly1305::ChaCha20Poly1305::new(&key);
+    let plaintext = cipher
+        .decrypt(&nonce, reader.as_ref())
+        .map_err(|e| anyhow::anyhow!(e))?;
+    Ok(plaintext.to_vec())
+}
+
+fn generate_nonce_cipher(key: &[u8], nonce: &[u8]) -> Result<(ChaCha20Poly1305, Nonce)> {
+    let key: [u8; 32] = Chacha20poly1305::try_new(key)?.key;
+    let key = GenericArray::from_slice(&key);
+    let nonce = GenericArray::from_slice(nonce);
+    let cipher = ChaCha20Poly1305::new(key);
+    Ok((cipher, *nonce))
 }
 
 #[cfg(test)]

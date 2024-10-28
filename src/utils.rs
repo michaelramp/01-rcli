@@ -14,5 +14,8 @@ pub fn get_content(input: &str) -> Result<Vec<u8>> {
     let mut reader = get_reader(input)?;
     let mut buf = Vec::new();
     reader.read_to_end(&mut buf)?;
+    if let Some(&b'\n') = buf.last() {
+        buf.pop(); // 移除最后一个字节
+    }
     Ok(buf)
 }

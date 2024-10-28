@@ -1,6 +1,7 @@
 use crate::{
-    get_content, get_reader, process_text_key_generate, process_text_sign, process_text_verify,
-    CmdExector,
+    get_content, get_reader, process_text_decrypt, process_text_encrypt, process_text_key_generate,
+    process_text_key_generate_key, process_text_key_generate_nonce, process_text_sign,
+    process_text_verify, CmdExector,
 };
 
 use super::{verify_file, verify_path};
@@ -19,6 +20,12 @@ pub enum TextSubCommand {
     Verify(TextVerifyOpts),
     #[command(about = "Generate a random blake3 key or ed25519 key pair")]
     Generate(KeyGenerateOpts),
+    #[command(about = "Generate a random ChaCha20Poly1305 pair")]
+    Generatec(KeyGenerateCOpts),
+    #[command(about = "")]
+    Encrypt(EncryptOpts),
+    #[command(about = "a")]
+    Decrypt(DecryptOpts),
 }
 
 #[derive(Debug, Parser)]
@@ -49,6 +56,28 @@ pub struct KeyGenerateOpts {
     pub format: TextSignFormat,
     #[arg(short, long, value_parser = verify_path)]
     pub output_path: PathBuf,
+}
+
+#[derive(Debug, Parser)]
+pub struct KeyGenerateCOpts {
+    #[arg(short, long, value_parser = verify_path)]
+    pub output_path: PathBuf,
+}
+
+#[derive(Debug, Parser)]
+pub struct EncryptOpts {
+    #[arg(short, long, value_parser = verify_file, default_value = "-")]
+    pub input: String,
+    #[arg(short, long, value_parser = verify_file)]
+    pub key: String,
+}
+
+#[derive(Debug, Parser)]
+pub struct DecryptOpts {
+    #[arg(short, long, value_parser = verify_file, default_value = "-")]
+    pub input: String,
+    #[arg(short, long, value_parser = verify_file)]
+    pub key: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -121,6 +150,48 @@ impl CmdExector for KeyGenerateOpts {
         for (k, v) in key {
             fs::write(self.output_path.join(k), v).await?;
         }
+        Ok(())
+    }
+}
+
+impl CmdExector for KeyGenerateCOpts {
+    async fn execute(self) -> anyhow::Result<()> {
+        let key = process_text_key_generate_key()?;
+        for (k, v) in key {
+            fs::write(self.output_path.join(k), v).await?;
+        }
+        let nonce = process_text_key_generate_nonce()?;
+        for (k, v) in nonce {
+            fs::write(self.output_path.join(k), v).await?;
+        }
+        Ok(())
+    }
+}
+
+impl CmdExector for EncryptOpts {
+    async fn execute(self) -> anyhow::Result<()> {
+        let mut reader = get_reader(&self.input)?;
+        let key = get_content(&self.key)?;
+        let nonce = get_content("fixtures/nonce.txt")?;
+        let sig = process_text_encrypt(&mut reader, &key, &nonce)?;
+        // base64 output
+        let encoded = URL_SAFE_NO_PAD.encode(sig);
+        println!("{}", encoded);
+        Ok(())
+    }
+}
+
+impl CmdExector for DecryptOpts {
+    async fn execute(self) -> anyhow::Result<()> {
+        let mut reader = get_reader(&self.input)?;
+        let key = get_content(&self.key)?;
+        let nonce = get_content("fixtures/nonce.txt")?;
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf)?;
+        let mut reader = URL_SAFE_NO_PAD.decode(&buf)?;
+        let text = process_text_decrypt(&mut reader, &key, &nonce)?;
+        let text = String::from_utf8(text).expect("Invalid UTF-8 data");
+        println!("{:?}", text);
         Ok(())
     }
 }
